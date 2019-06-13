@@ -5,7 +5,7 @@ Base class for SAM Template providers
 import logging
 
 from samtranslator.intrinsics.resolver import IntrinsicsResolver
-from samtranslator.intrinsics.actions import RefAction
+from samtranslator.intrinsics.actions import RefAction, EqualsAction, IfAction, FindInMapAction
 
 from samcli.lib.samlib.wrapper import SamTranslatorWrapper
 from samcli.lib.samlib.resource_metadata_normalizer import ResourceMetadataNormalizer
@@ -36,6 +36,8 @@ class SamBaseProvider(object):
 
     # Only Ref is supported when resolving template parameters
     _SUPPORTED_INTRINSICS = [RefAction]
+    _CONDITION_OPERATORS = [EqualsAction]
+    _CONDITION_FUNCTIONS = [IfAction, FindInMapAction]
 
     @staticmethod
     def get_template(template_dict, parameter_overrides=None):
@@ -62,6 +64,7 @@ class SamBaseProvider(object):
             template_dict = SamTranslatorWrapper(template_dict).run_plugins()
 
         template_dict = SamBaseProvider._resolve_parameters(template_dict, parameter_overrides)
+        template_dict = SamBaseProvider._resolve_conditions(template_dict, parameter_overrides)
         ResourceMetadataNormalizer.normalize(template_dict)
         return template_dict
 
@@ -91,6 +94,37 @@ class SamBaseProvider(object):
         # Intrinsics resolver will mutate the original template
         return IntrinsicsResolver(parameters=parameter_values, supported_intrinsics=supported_intrinsics)\
             .resolve_parameter_refs(template_dict)
+
+    @staticmethod
+    def _resolve_conditions(template_dict, parameter_overrides):
+        """
+        In the given template, apply condition values to resolve intrinsic functions
+
+        Parameters
+        ----------
+        template_dict : dict
+            SAM Template
+
+        parameter_overrides : dict
+            Values for template parameters provided by user
+
+        Returns
+        -------
+        dict
+            Resolved SAM template
+        """
+
+        parameter_values = SamBaseProvider._get_parameter_values(template_dict, parameter_overrides)
+
+        condition_operator = {action.intrinsic_name: action() for action in SamBaseProvider._CONDITION_OPERATORS}
+        condition_function = {action.intrinsic_name: action() for action in SamBaseProvider._CONDITION_FUNCTIONS}
+
+        condition_value = IntrinsicsResolver(parameters=parameter_values, supported_intrinsics=condition_operator)\
+            .resolve_parameter_refs(template_dict.get("Conditions", {}))
+
+        # Intrinsics function will mutate the original template
+        return IntrinsicsResolver(parameters=parameter_values, conditions=condition_value, supported_intrinsics=condition_function)\
+            .resolve_condition_refs(template_dict)
 
     @staticmethod
     def _get_parameter_values(template_dict, parameter_overrides):
